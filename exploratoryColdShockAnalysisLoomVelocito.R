@@ -5,10 +5,8 @@ library(tidytext)
 
 ## individually processed samples, merged, but not anchored
 
-prod.desc <- read.csv('../Input/coldShock/genes/BDiv_Prod_desc.csv')
-prod.desc <- prod.desc %>% transmute(GeneID = Gene.ID, Product.Description = Product.Description)
 
-S.O.list <- readRDS('../Input/coldShock/RData_new/S_O_list.RData')
+S.O.list <- readRDS('../Input/coldShock/RData_new/S_O_loom_RNAvel_list.RData')
 num.cores <- detectCores(all.tests = FALSE, logical = TRUE)
 
 num.objs <- length(S.O.list)
@@ -16,127 +14,79 @@ spps <- names(S.O.list)
 print(spps)
 
 
-genes <- lapply(1:num.objs, function(i){
-  gene.row <- rownames(S.O.list[[i]]@assays$RNA@data)
-} )
 
-common.genes <- Reduce(intersect, genes)
-length(common.genes)
+## First merge without anchoring. Use to generate UMAP
+alldata <- merge(S.O.list[[1]], S.O.list[2:num.objs], add.cell.ids=spps)
 
-## Calculating total mRNA levels
-copy.numbers <- lapply(S.O.list, function(S.O){
-  m <- mean(colSums(S.O@assays$RNA@data))
-  s <- sd(colSums(S.O@assays$RNA@data))
-  return(list(m = m, s = s))
-})
+alldata <- NormalizeData(alldata, normalization.method = "LogNormalize", scale.factor = 10000)
+alldata <- FindVariableFeatures(alldata, selection.method = "vst", nfeatures = 3000)
+alldata <- ScaleData(alldata)
+alldata <- RunPCA(alldata, features = VariableFeatures(object = alldata))
+alldata <- FindNeighbors(alldata, dims = 1:30, reduction = 'pca')
+alldata <- FindClusters(alldata, resolution = 0.2)
+alldata <- RunUMAP(alldata, dims = 1:30)
 
-means <- lapply(copy.numbers, `[[`, 1)
-sds <- lapply(copy.numbers, `[[`, 2)
-
-copy.numbers <- data.frame(time = names(means), m = unlist(means), s= unlist(sds))
-copy.numbers$time <- factor(copy.numbers$time,levels = c('0hr', '4hr', '12hr', '36hr', '7d', '36hr(R)', '7d(R)'))
-
-
-
-p <- ggplot(copy.numbers, aes(time , m, fill = time, color=time)) + 
+saveRDS(alldata, '../Input/coldShock/RData_new/S_O_loom_RNAvel_list_merged_not_anchored.RData')
+## Extracting the data for control over PCA directions
+getPcaMetaData <- function(S.O){
+  pc <- S.O@reductions$pca@cell.embeddings
+  pc <- data.frame(pc) %>% dplyr::mutate(Sample = rownames(pc)) %>% 
+    transmute(Sample = Sample, PC_1 = PC_1, PC_2 = PC_2, PC_3 = PC_3)
+  umap <- S.O@reductions$umap@cell.embeddings
+  umap <- data.frame(umap) %>% dplyr::mutate(Sample = rownames(umap)) %>% 
+    transmute(Sample = Sample, UMAP_1 = UMAP_1, UMAP_2 = UMAP_2)
   
-plot(p)
+  meta.data <- data.frame(Sample = rownames(S.O@meta.data), 
+                          spp = S.O@meta.data$spp)
+  meta.data <- left_join(meta.data,
+                         pc, by = 'Sample')
+  meta.data <- left_join(meta.data, umap, by = 'Sample')
+  return(meta.data)  
+}
 
 
-p <- ggplot(data=copy.numbers, aes(x = time , y = m)) +
-  geom_bar(stat = "identity")+
-  geom_errorbar(aes(ymin=m-s, ymax=m+s), width=0.2, size=1) + 
-  geom_text(aes(label=round(m), vjust=2,  color="black", size=6, fontface="bold"))+
-  theme_minimal() + 
-  theme(panel.spacing = unit(0.5, "lines")) + 
-  theme(axis.text.x = element_text(face="bold", size=16, angle=0)) +
-  theme(axis.text.y = element_text(face="bold", size=16, angle=0)) +
+pcaMataData.alldata <- getPcaMetaData(alldata)
+
+lvs <- c("BDiv0hrN","BDiv4hrN", "BDiv12hrN", "BDiv36hrN", "BDiv7dN", "BDiv36hrY", "BDiv7dY" )
+pcaMataData.alldata$spp <- factor(pcaMataData.alldata$spp, levels = lvs)
+
+p  <- ggplot(pcaMataData.alldata, aes(x= UMAP_1,y=UMAP_2)) +
+  geom_point(aes(#fill = lable.prob,
+    fill = spp,
+    color = spp
+  ), #color = 'blue', 
+  shape=21, size = 1)+ 
+  #scale_color_manual(values = c("BBig" = "firebrick","BBov" ="darkorchid3", 'BDiv_Cow' = 'darkslateblue', 
+  #                              'BDiv_human' = 'darkolivegreen4')) +
+  #scale_fill_manual(values = c("BBig" = "firebrick","BBov" ="darkorchid3", 'BDiv_Cow' = 'darkslateblue', 
+  #                             'BDiv_human' = 'darkolivegreen4')) +
+  
+  theme_bw(base_size = 14) +
+  theme(legend.position = "right") +
+  #scale_fill_gradientn(colours = viridis::inferno(10)) +
+  #scale_fill_gradientn(colours = col_range(10)) +
+  #scale_fill_gradient(low = "gray66", high = "blue", midpoint = mid_point) + 
+  #scale_fill_brewer(palette = "BuPu") +
+  ylab('UMAP2') + xlab('UMAP1') +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1, size = 12, face="bold")) +
+  theme(axis.text.y = element_text(angle = 0, hjust = 1, size = 12, face="bold")) +
+  theme(strip.background = element_rect(colour="black", fill="white",
+                                        size=0.5, linetype="solid")) +
+  facet_wrap(spp~.) + 
+  #ggtitle(titles[i]) +
   theme(
-    axis.title.x = element_text(size=18, face="bold"),
-    axis.title.y = element_text(size=18, face="bold")
-  ) #+  coord_flip()
+    plot.title = element_text(size=14, face = "bold.italic", color = 'red'),
+    axis.title.x = element_text(size=14, face="bold", hjust = 1),
+    axis.title.y = element_text(size=14, face="bold")
+  )
+
 
 plot(p)
 
-## Transfer lables from toxo-based markers.
-S.O.labs   <- readRDS('../Input/compScBabesia/RData_new/S_O_anchored_list_pstime_GAM_individual_phase_bound_from_toxo.Rdata')
-S.O.labs   <- S.O.labs$bdiv_human
-meta.data  <- S.O.labs@meta.data
-trans.count.data <- S.O.labs@assays$RNA@counts
-comm.id <- rownames(trans.count.data) %in% common.genes
-trans.count.data <- trans.count.data[!is.na(comm.id), ]
-S.O.labs <- CreateSeuratObject(counts = trans.count.data)
-S.O.labs$orig.ident <- 'ToxoLabs'
-S.O.labs$spp <- 'ToxoLabs'
-S.O.labs <- AddMetaData(S.O.labs, meta.data)
-S.O.labs <- prep_S.O(S.O.labs)
-
-S.Os <- lapply(S.O.list, function(S.O){
-  anchors <- FindTransferAnchors(reference = S.O.labs, query = S.O, dims = 1:30)
-  predictions <- TransferData(anchorset = anchors, refdata = S.O.labs@meta.data$cell.cycle.phase, dims = 1:30)
-  predictions$phase <- predictions$predicted.id
-  S.O <- AddMetaData(object = S.O, metadata = predictions)
-})
-
-# ## Transfer Toxo lables
-# S.O.tg    <- readRDS('../Input/compScBdTgPb/RData/S.O.tg.RData')
-# GT1.bdiv  <- read.xlsx("../Input/compScBdTgPb/Orthologs/rec_GT1.vs.B.divergence.xlsx")
-# GT1.BD <- GT1.bdiv %>% dplyr::select('query_id', contains('subject_id'))
-# colnames(GT1.BD) <- c('TGGT1', 'BDiv')
-# tg_meta.data <- S.O.tg@meta.data
-# tg.data <- S.O.tg@assays$RNA@counts
-# bdiv.id <- GT1.BD$BDiv[match(gsub('-','_',rownames(tg.data)), GT1.BD$TGGT1)]
-# orth.ind <- !is.na(bdiv.id)
-# tg.data <- tg.data[orth.ind, ]
-# sum(orth.ind) ## total number of orthologs
-# rownames(tg.data) <- bdiv.id[orth.ind]
-
-# S.O.toxo <- CreateSeuratObject(counts = tg.data)
-# S.O.toxo$orig.ident <- 'Toxo'
-# S.O.toxo$spp <- 'Toxo'
-# S.O.toxo <- AddMetaData(S.O.toxo, tg_meta.data)
-# 
-# S.O.toxo <- prep_S.O(S.O.toxo)
-
-## Transfer labels
-# S.Os <- lapply(S.O.list, function(S.O){
-#   anchors <- FindTransferAnchors(reference = S.O.toxo, query = S.O, dims = 1:30)
-#   predictions <- TransferData(anchorset = anchors, refdata = S.O.toxo@meta.data$phase, dims = 1:30)
-#   predictions$phase <- predictions$predicted.id
-#   S.O <- AddMetaData(object = S.O, metadata = predictions)
-# })
-
-## Merge again without anchoring
-alldata.toxo.labs <- merge(S.Os[[1]], S.Os[2:num.objs], add.cell.ids=spps)
-alldata.toxo.labs <- NormalizeData(alldata.toxo.labs, normalization.method = "LogNormalize", scale.factor = 10000)
-alldata.toxo.labs <- FindVariableFeatures(alldata.toxo.labs, selection.method = "vst", nfeatures = 3000)
-alldata.toxo.labs <- ScaleData(alldata.toxo.labs)
-alldata.toxo.labs <- RunPCA(alldata.toxo.labs, features = VariableFeatures(object = alldata.toxo.labs))
-alldata.toxo.labs <- FindNeighbors(alldata.toxo.labs, dims = 1:30, reduction = 'pca')
-alldata.toxo.labs <- FindClusters(alldata.toxo.labs, resolution = 0.2)
-alldata.toxo.labs <- RunUMAP(alldata.toxo.labs, dims = 1:30)
-
-## Change the phase label 
-# alldata.toxo.labs@meta.data$phase[alldata.toxo.labs@meta.data$phase == 'G1.a'] <- 'G1'
-# alldata.toxo.labs@meta.data$phase[alldata.toxo.labs@meta.data$phase == 'G1.b'] <- 'G1'
-# alldata.toxo.labs@meta.data$phase[alldata.toxo.labs@meta.data$phase == 'S'] <- 'S/M'
-# alldata.toxo.labs@meta.data$phase[alldata.toxo.labs@meta.data$phase == 'M'] <- 'S/M'
-
-# alldata.toxo.labs@meta.data$phase <- factor(alldata.toxo.labs@meta.data$phase, 
-#                                             levels = c('G1', 'S/M', 'C'))
-
-alldata.toxo.labs@meta.data$phase <- factor(alldata.toxo.labs@meta.data$phase, 
-                                            levels = c('G', 'SM', 'MC', 'C'))
-
-Idents(alldata.toxo.labs) <- "phase"
-
-## Relabel spp
-alldata.toxo.labs@meta.data$spp <- gsub('Y', '\\(R\\)', gsub('N', '',gsub('BDiv', '', alldata.toxo.labs@meta.data$spp)))
-
-alldata.toxo.labs@meta.data$spp <- factor(alldata.toxo.labs@meta.data$spp,
-                                                     levels = c('0hr', '4hr', '12hr', '36hr', '7d', '36hr(R)', '7d(R)'))
-
-p <- DimPlot(alldata.toxo.labs, reduction = "pca", 
+Idents(alldata) <- 'phase'
+alldata@meta.data$spp <- factor(alldata@meta.data$spp, 
+                                levels = lvs)
+p <- DimPlot(alldata, reduction = "pca", 
              #group.by = "cell", 
              split.by = 'spp',
              pt.size = 0.8,
@@ -155,72 +105,25 @@ p <- DimPlot(alldata.toxo.labs, reduction = "pca",
   )
 
 
-
-
 plot(p)
 
 
-## Save the data
-saveRDS(alldata.toxo.labs, '../Input/coldShock/RData_new/S_O_list_taxo_labs_not_anchored.RData')
-
 ## Now Integrate the objects, using 0hr as reference
 print(file.info)
-names(S.Os)
+names(S.O.list)
 ref.ind <- 1
 
-alldata.toxo.labs.integrated <- processeMergedS.O(S.Os, data.ind = NA, ref.ind = ref.ind, res = 0.1, SC = FALSE)
+all.samples.integrated <- processeMergedS.O(S.Os, data.ind = NA, ref.ind = ref.ind, res = 0.1, SC = FALSE)
 
-
-## Change phase labels
-# alldata.toxo.labs.integrated@meta.data$phase[alldata.toxo.labs.integrated@meta.data$phase == 'G1.a'] <- 'G1'
-# alldata.toxo.labs.integrated@meta.data$phase[alldata.toxo.labs.integrated@meta.data$phase == 'G1.b'] <- 'G1'
-# alldata.toxo.labs.integrated@meta.data$phase[alldata.toxo.labs.integrated@meta.data$phase == 'S'] <- 'S/M'
-# alldata.toxo.labs.integrated@meta.data$phase[alldata.toxo.labs.integrated@meta.data$phase == 'M'] <- 'S/M'
-
-# alldata.toxo.labs.integrated@meta.data$phase <- factor(alldata.toxo.labs.integrated@meta.data$phase, 
-#                                                        levels = c('G1', 'S/M', 'C'))
-
-alldata.toxo.labs.integrated@meta.data$phase <- factor(alldata.toxo.labs.integrated@meta.data$phase, 
-                                                        levels = c('G', 'SM', 'MC', 'C'))
-
-Idents(alldata.toxo.labs.integrated) <- "phase"
-
-## Relabel spp
-alldata.toxo.labs.integrated@meta.data$spp <- gsub('Y', '\\(R\\)', 
-                                                   gsub('N', '',gsub('BDiv', '', alldata.toxo.labs.integrated@meta.data$spp)))
-
-alldata.toxo.labs.integrated@meta.data$spp <- factor(alldata.toxo.labs.integrated@meta.data$spp,
-                                                     levels = c('0hr', '4hr', '12hr', '36hr', '7d', '36hr(R)', '7d(R)'))
-alldata.toxo.labs.integrated@meta.data$spp <- gsub('Y', '\\(R\\)', 
-                                                   gsub('N', '', gsub('BDiv', '', alldata.toxo.labs.integrated@meta.data$spp)))
-
-alldata.toxo.labs.integrated@meta.data$spp <- factor(alldata.toxo.labs.integrated@meta.data$spp,
-                                                     levels = c('0hr', '4hr', '12hr', '36hr', '7d', '36hr(R)', '7d(R)'))
-
-
-## Generate matched phase/spp variable
-alldata.toxo.labs.integrated@meta.data$phase.cond <- paste(alldata.toxo.labs.integrated@meta.data$spp,
-                                                           alldata.toxo.labs.integrated@meta.data$phase, sep = '_')
-
-# lvs <- lapply(c('G1', 'S/M', 'C'), function(x) {
-#   paste(c('0hr', '4hr', '12hr', '36hr', '7d', '36hr(R)', '7d(R)'), x, sep = '_')
-# })
-
-lvs <- lapply(c('G', 'SM', 'MC', 'C'), function(x) {
-  paste(c('0hr', '4hr', '12hr', '36hr', '7d', '36hr(R)', '7d(R)'), x, sep = '_')
-})
-
-lvs <- unlist(lvs)
-alldata.toxo.labs.integrated@meta.data$phase.cond <- factor(alldata.toxo.labs.integrated@meta.data$phase.cond,
-                                                            levels = lvs)
-
-Idents(alldata.toxo.labs.integrated) <- "phase"
-p <- DimPlot(alldata.toxo.labs.integrated, reduction = "pca", 
-              #group.by = "cells", 
-              split.by = 'spp',
-              pt.size = 1,
-              #shape.by='spp',
-              label = TRUE, label.size = 6) + NoLegend() + 
+all.samples.integrated@meta.data$spp <- factor(all.samples.integrated@meta.data$spp, 
+                                               levels = lvs)
+Idents(all.samples.integrated) <- "phase"
+p <- DimPlot(all.samples.integrated, reduction = "pca", 
+             #group.by = "cells", 
+             split.by = 'spp',
+             pt.size = 1,
+             #shape.by='spp',
+             label = TRUE, label.size = 6) + NoLegend() + 
   theme(panel.spacing = unit(0.5, "lines")) + 
   theme(axis.text.x = element_text(face="bold", size=12, angle=0)) +
   theme(axis.text.y = element_text(face="bold", size=12, angle=0)) +
@@ -240,11 +143,15 @@ plot(p)
 
 
 ## Save the data
-saveRDS(alldata.toxo.labs.integrated, '../Input/coldShock/RData_new/S_O_list_taxo_labs_anchored.RData')
 
+saveRDS(all.samples.integrated, '../Input/coldShock/RData_new/S_O_loom_RNAvel_list_merged_anchored.RData')
 
-## Some plots
-tmp <- alldata.toxo.labs.integrated@meta.data
+tmp <- all.samples.integrated@meta.data
+
+tmp$phase[tmp$phase == 'G1.a'] <- 'G1'
+tmp$phase[tmp$phase == 'G1.b'] <- 'G1'
+tmp$phase[tmp$phase == 'S'] <- 'S/M'
+tmp$phase[tmp$phase == 'M'] <- 'S/M'
 
 stats <- tmp %>% group_by(spp) %>% mutate(total.cells = n()) %>% 
   ungroup() %>% group_by(spp, phase) %>% summarise(counts = n(), perc = n()/total.cells[1]) 
@@ -252,20 +159,27 @@ stats <- tmp %>% group_by(spp) %>% mutate(total.cells = n()) %>%
 ## manually add the missing phase
 #stats <- rbind(stats, data.frame(spp = 'BDiv7dN', phase = 'M', counts = 0, perc = 0))
 
+#stats$phase <- factor(stats$phase, levels = c("G1.a", "G1.b", "S", "M", "C"))
+stats$phase <- factor(stats$phase, levels = c("G1",  "S/M", "C"))
+#stats$phase <- factor(stats$phase, levels = c("G1",  "S", "M", "C"))
+stats$spp <- factor(stats$spp, levels = lvs)
+
 stats <- stats %>% arrange(spp, phase)
 
-p <- ggplot(data=stats, aes(x=spp, y=perc, fill = phase)) +
-  geom_bar(stat="identity", position=position_dodge(width = 1.0), width=0.8) +
-  geom_text(aes(label=round(perc, 2)), vjust=-1.3,  color="black", 
-            size=3.5, fontface="bold", position=position_dodge(1.0), angle=0)+
+p <- ggplot(data=stats, aes(x=spp, y=perc, color = phase, group = phase)) +
+  geom_point(size = 1.5) + geom_path(size = 1.2) + geom_vline(xintercept = 5, col='pink', lwd=1.2, linetype=2) + 
   theme_minimal() + 
-  theme(panel.spacing = unit(0.5, "lines")) + 
-  theme(axis.text.x = element_text(face="bold", size=12, angle=0)) +
-  theme(axis.text.y = element_text(face="bold", size=12, angle=0)) +
+  theme(axis.text.x = element_text(face="bold", size=16, angle=45)) +
+  theme(axis.text.y = element_text(face="bold", size=16, angle=0)) +
+  scale_color_manual(values = c("G1" = "#ff6c67","S/M" ='#a2a700', 'C' = '#00c377')) +
   theme(
-    axis.title.x = element_text(size=14, face="bold"),
-    axis.title.y = element_text(size=14, face="bold")
-  ) #+  coord_flip()
+    axis.title.x = element_text(size=18, face="bold"),
+    axis.title.y = element_text(size=18, face="bold")
+  ) + theme(#legend.position = 'topright',
+    legend.title = element_text(colour="black", size=16, 
+                                face="bold"),
+    legend.text = element_text(colour="black", size=16, 
+                               face="bold"))
 
 plot(p)
 
@@ -297,113 +211,120 @@ ggsave(filename="../Output/coldShock/phase_proportions_trends.pdf",
 
 
 ## 2D histogram of densities
+S.Os <- SplitObject(all.samples.integrated, split.by = 'spp')
 lvs <- c("BDiv0hrN","BDiv4hrN", "BDiv12hrN", "BDiv36hrN", "BDiv7dN", "BDiv36hrY", "BDiv7dY" )
-pcaMataData.alldata$spp <- factor(pcaMataData.alldata$spp, levels = lvs)
-p  <- ggplot(pcaMataData.alldata, aes(x= PC_1,y=PC_2)) +
-  #geom_density_2d() +
-  
-  #stat_density_2d(aes(fill = ..density..), geom = "raster", contour = FALSE) +
-  #stat_density_2d(aes(fill = ..level..), geom = "polygon", colour="white") +
-  geom_bin2d(bins = 70) +
-  scale_fill_continuous(type = "viridis") +
-  #geom_density_2d() + 
-  
-  #geom_bin2d(bins = 60) +
-  #scale_fill_continuous(type = "viridis") +
-  
-  # geom_point(aes(#fill = lable.prob,
-  #   fill = spp,
-  #   color = spp
-  # ), #color = 'blue', 
-  # shape=21, size = 1)+ 
-  #scale_color_manual(values = c("BBig" = "firebrick","BBov" ="darkorchid3", 'BDiv_Cow' = 'darkslateblue', 
-  #                              'BDiv_human' = 'darkolivegreen4')) +
-  #scale_fill_manual(values = c("BBig" = "firebrick","BBov" ="darkorchid3", 'BDiv_Cow' = 'darkslateblue', 
-  #                             'BDiv_human' = 'darkolivegreen4')) +
-  
-  theme_bw(base_size = 14) +
-  #theme(legend.position = "right") +
-  #scale_fill_gradientn(colours = viridis::inferno(10)) +
-  #scale_fill_gradientn(colours = col_range(10)) +
-  #scale_fill_gradient(low = "gray66", high = "blue", midpoint = mid_point) + 
-  #scale_fill_brewer(palette = "BuPu") +
-  ylab('UMAP2') + xlab('UMAP1') +
-  theme(axis.text.x = element_text(angle = 0, hjust = 1, size = 12, face="bold")) +
-  theme(axis.text.y = element_text(angle = 0, hjust = 1, size = 12, face="bold")) +
-  theme(strip.background = element_rect(colour="black", fill="white",
-                                        size=0.5, linetype="solid")) +
-  facet_wrap(spp~.) + 
-  #ggtitle(titles[i]) +
-  theme(
-    plot.title = element_text(size=14, face = "bold.italic", color = 'red'),
-    axis.title.x = element_text(size=14, face="bold", hjust = 1),
-    axis.title.y = element_text(size=14, face="bold")
-  )
-
-
-plot(p)
-
-BDiv0hrN <- pcaMataData.alldata %>% dplyr::filter(spp == 'BDiv0hrN')
-
-p  <- ggplot(BDiv0hrN, aes(x= PC_1,y= PC_2)) +
-  #geom_density_2d() +
-  
-  #stat_density_2d(aes(fill = ..density..), geom = "raster", contour = FALSE) +
-  #stat_density_2d(aes(fill = ..level..), geom = "polygon", colour="white") +
+BDiv0hrN <- getPcaMetaData(S.Os$BDiv0hrN)
+BDiv7dN <- getPcaMetaData(S.Os$BDiv7dN)
+p1  <- ggplot(BDiv7dN, aes(x= PC_1,y= PC_2)) +
   geom_bin2d(bins = 70) +
   scale_fill_continuous(type = "viridis") +
   geom_density_2d(color= 'red', size = 1) + 
-  
-  #geom_bin2d(bins = 60) +
-  #scale_fill_continuous(type = "viridis") +
-  
-  # geom_point(aes(#fill = lable.prob,
-  #   fill = spp,
-  #   color = spp
-  # ), #color = 'blue', 
-  # shape=21, size = 1)+ 
-  #scale_color_manual(values = c("BBig" = "firebrick","BBov" ="darkorchid3", 'BDiv_Cow' = 'darkslateblue', 
-#                              'BDiv_human' = 'darkolivegreen4')) +
-#scale_fill_manual(values = c("BBig" = "firebrick","BBov" ="darkorchid3", 'BDiv_Cow' = 'darkslateblue', 
-#                             'BDiv_human' = 'darkolivegreen4')) +
-
   theme_bw(base_size = 14) +
-  #theme(legend.position = "right") +
-  #scale_fill_gradientn(colours = viridis::inferno(10)) +
-  #scale_fill_gradientn(colours = col_range(10)) +
-  #scale_fill_gradient(low = "gray66", high = "blue", midpoint = mid_point) + 
-  #scale_fill_brewer(palette = "BuPu") +
+  #theme(legend.position = "none") +
   ylab('PC2') + xlab('PC1') +
-  theme(axis.text.x = element_text(angle = 0, hjust = 1, size = 12, face="bold")) +
-  theme(axis.text.y = element_text(angle = 0, hjust = 1, size = 12, face="bold")) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1, size = 16, face="bold")) +
+  theme(axis.text.y = element_text(angle = 0, hjust = 1, size = 16, face="bold")) +
   theme(strip.background = element_rect(colour="black", fill="white",
                                         size=0.5, linetype="solid")) +
   #ggtitle(titles[i]) +
   theme(
     plot.title = element_text(size=14, face = "bold.italic", color = 'red'),
-    axis.title.x = element_text(size=14, face="bold", hjust = 1),
-    axis.title.y = element_text(size=14, face="bold")
-  )
+    axis.title.x = element_text(size=18, face="bold", hjust = 1),
+    axis.title.y = element_text(size=18, face="bold")
+  ) + 
+  theme(legend.position = c(0.1, 0.2),
+        legend.title = element_text(colour="black", size=16, 
+                                    face="bold"),
+        legend.text = element_text(colour="black", size=16, 
+                                   face="bold"))
 
 
-plot(p)
+
+plot(p1)
+
+
+S.O.BDiv0hrN <- S.O.list$BDiv0hrN
+S.O.BDiv0hrN@meta.data$Phase <- S.O.BDiv0hrN@meta.data$phase
+
+S.O.BDiv0hrN$Phase[S.O.BDiv0hrN$Phase == 'G1.a'] <- 'G1'
+S.O.BDiv0hrN$Phase[S.O.BDiv0hrN$Phase == 'G1.b'] <- 'G1'
+S.O.BDiv0hrN$Phase[S.O.BDiv0hrN$Phase == 'S'] <- 'S/M'
+S.O.BDiv0hrN$Phase[S.O.BDiv0hrN$Phase == 'M'] <- 'S/M'
+
+Idents(S.O.BDiv0hrN) <- 'Phase'
+p2 <- DimPlot(S.O.BDiv0hrN, reduction = "pca", 
+              pt.size = 0.8,
+              #shape.by='spp',
+              label = T, repel = T, label.size = 5) + NoLegend() + 
+  scale_color_manual(values = c("G1" = "#ff6c67","S/M" ='#a2a700', 'C' = '#00c377')) +
+  theme(panel.spacing = unit(0.5, "lines")) + 
+  ylab('PC2') + xlab('PC1') +
+  theme(axis.text.x = element_text(face="bold", size=16, angle=0)) +
+  theme(axis.text.y = element_text(face="bold", size=16, angle=0)) +
+  theme(
+    axis.title.x = element_text(size=18, face="bold"),
+    axis.title.y = element_text(size=18, face="bold")
+  ) 
+
+
+plot(p2)
 
 BDiv0hrN.stats <- stats %>% dplyr::filter(spp == 'BDiv0hrN')
+BDiv7dN.stats <- stats %>% dplyr::filter(spp == 'BDiv7dN')
 
-p <- ggplot(data=BDiv0hrN.stats, aes(x=phase, y=perc, fill = phase)) +
+p3 <- ggplot(data=BDiv7dN.stats, aes(x=phase, y=perc, fill = phase)) +
   geom_bar(stat="identity", position=position_dodge(width = 1.0), width=0.8) +
-  geom_text(aes(label=round(perc, 2)), vjust=-1.3,  color="black", 
-            size=3.5, fontface="bold", position=position_dodge(1.0), angle=0)+
+  geom_text(aes(label=round(perc, 2)), vjust=2,  color="black", 
+            size=6, fontface="bold", position=position_dodge(1.0), angle=0)+
+  scale_fill_manual(values = c("G1" = "#ff6c67","S/M" ='#a2a700', 'C' = '#00c377')) +
   theme_minimal() + 
   theme(panel.spacing = unit(0.5, "lines")) + 
-  theme(axis.text.x = element_text(face="bold", size=12, angle=0)) +
-  theme(axis.text.y = element_text(face="bold", size=12, angle=0)) +
+  theme(axis.text.x = element_text(face="bold", size=16, angle=0)) +
+  theme(axis.text.y = element_text(face="bold", size=16, angle=0)) +
   theme(
-    axis.title.x = element_text(size=14, face="bold"),
-    axis.title.y = element_text(size=14, face="bold")
+    axis.title.x = element_text(size=18, face="bold"),
+    axis.title.y = element_text(size=18, face="bold")
   ) #+  coord_flip()
 
-plot(p)
+plot(p3)
+
+
+### RNAvelocity plots on merged data
+
+#S.Os <- SplitObject(all.samples.integrated, split.by = 'spp')
+S.Os <- SplitObject(alldata, split.by = 'spp')
+#Idents(S.Os$BDiv7dN) <- 'phase'
+S.O <- RunVelocity(object = S.Os$BDiv0hrN, reduction = 'umap', deltaT = 1, kCells = 25, 
+                   fit.quantile = 0.02,  ncores = 16)
+
+ident.colors <- (scales::hue_pal())(n = length(x = levels(x = S.O)))
+names(x = ident.colors) <- levels(x = S.O)
+cell.colors <- ident.colors[Idents(object = S.O)]
+names(x = cell.colors) <- colnames(x = S.O)
+S.O <- AddMetaData(S.O, data.frame(samp = names(cell.colors), cell.colors = cell.colors))
+
+p <- show.velocity.on.embedding.cor(emb = Embeddings(object = S.O, reduction = "umap"),
+                                    vel = Tool(object = S.O, slot = "RunVelocity"), n = 200, scale = "log",
+                                    cell.colors = ac(x = cell.colors, alpha = 0.5), nPcs = 30,
+                                    cex = 0.8, arrow.scale = 1, show.grid.flow = TRUE,
+                                    min.grid.cell.mass = 0.5, grid.n = 40, arrow.lwd = 1,
+                                    do.par = FALSE, cell.border.alpha = 0.1, n.cores = 16)
+
+
+DimPlot(S.O, reduction = 'umap', label = T) + NoLegend()
+## Some plots
+S.O.list[[1]]@meta.data$cell.colors
+ident.colors <- (scales::hue_pal())(n = length(x = levels(x = S.O.list[[1]])))
+names(x = ident.colors) <- levels(x = S.O.list[[1]])
+cell.colors <- ident.colors[Idents(object = S.O.list[[1]])]
+names(x = cell.colors) <- colnames(x = S.O.list[[1]])
+
+show.velocity.on.embedding.cor(emb = Embeddings(object = S.O.list[[6]], reduction = "umap")[,1:2],
+                               vel = Tool(object = S.O.list[[6]], slot = "RunVelocity"), n = 300, scale = "sqrt",
+                               cell.colors = ac(x = S.O.list[[6]]@meta.data$cell.colors, alpha = 0.5),
+                               cex = 0.8, arrow.scale = 3, show.grid.flow = TRUE,
+                               min.grid.cell.mass = 0.5, grid.n = 40, arrow.lwd = 1,
+                               do.par = FALSE, cell.border.alpha = 0.1)
 
 
 ## Individual plots
@@ -845,7 +766,7 @@ plot(p1)
 
 matched.DEGs.top <- matched.DEGs.sig %>% group_by(cluster) %>% dplyr::filter(avg_log2FC < 0) %>% 
   top_n(2, abs(avg_log2FC))
-  #top_n(2, desc(pct.1))
+#top_n(2, desc(pct.1))
 print(matched.DEGs.top)
 
 
@@ -991,7 +912,7 @@ VlnPlot(object = all.spp.list[[2]], features = markers.to.plot2$gene)
 VlnPlot(object = all.spp.list[[1]], features = markers.to.plot2$gene)
 
 p1 <- FeaturePlot(all.samples.integrated, features = GM$all.markers.list.top[[1]]$gene,  split.by = 'spp',
-            max.cutoff = 3, cols = c("grey", "red"), reduction = 'pca')
+                  max.cutoff = 3, cols = c("grey", "red"), reduction = 'pca')
 
 ggsave(filename="../Output/scClockFigs/Integrated_0hr_7D_0h_marker_expr.pdf", 
        plot=p1,

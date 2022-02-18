@@ -49,5 +49,5 @@ file.info$spp <- paste('BDiv', file.info$time, file.info$reactivate, sep = '')
 
 print(file.info)
 
-saveRDS(file.info, '../Input/scClock/coldShock/file_info.RData')
-saveRDS(S.O.list, '../Input/scClock/coldShock/S_O_list.RData')
+saveRDS(file.info, '../Input/coldShock/RData/file_info.RData')
+saveRDS(S.O.list, '../Input/coldShock/RData/S_O_list.RData')
