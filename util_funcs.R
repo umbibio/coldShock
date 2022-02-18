@@ -855,8 +855,8 @@ plot.sme <-function(fit, v, conf = T){
   }
   
   plot(x = fit$data$tme, y = fit$data$y, ylim = ylim, xlim = xlim, xaxt="none",
-       xlab = '', ylab = '', col = 'black', cex = 1.2, main = '',
-       cex.lab = 1.2, font = 2)
+       xlab = '', ylab = '', col = 'black', cex = 1.4, main = '',
+       cex.lab = 1.4, font = 2)
   grid()
 
   for (i in 1:length(fs)) {
@@ -876,9 +876,9 @@ plot.sme <-function(fit, v, conf = T){
  
   axis(1, seq(min(fit$data$tme), max(fit$data$tme), length = 13),
        labels = seq(0, 12), font=2)
-  mtext(side=1, line=2, "Time (h)", col="black", font=2,cex=1.1)
-  mtext(side=2, line=2, "log2(expr)", col="black", font=2,cex=1.1)
-  title(main = v , cex.lab = 1.2, line = 0.5)
+  mtext(side=1, line=2, "Time (h)", col="black", font=2,cex=1.4)
+  mtext(side=2, line=2, "log2(expr)", col="black", font=2,cex=1.4)
+  title(main = v , cex.lab = 2, line = 0.5)
 }
 
 
@@ -1006,7 +1006,7 @@ crossCompareMarkers <- function(marker1, marker2, cond1, cond2){
 }
 
 
-processCount <- function(input.dir, filename, tt, rr, down.sample = T){
+processCountColdShock <- function(input.dir, filename, tt, rr, down.sample = T){
   file.counts <- read.csv(paste(input.dir, filename, sep = ''))
   genes <- file.counts$X
   expr <- file.counts[,-1]
@@ -1022,17 +1022,31 @@ processCount <- function(input.dir, filename, tt, rr, down.sample = T){
   print(cutoffs)
   S.O <- subset(S.O, subset = nFeature_RNA > cutoffs[1] & nFeature_RNA < cutoffs[2] )
   
-  if(down.sample){
-    S.O <- subset(x = S.O, downsample = 2000)
-  }
+  
+  
+  
+  S.O <- prep_S.O(S.O)
+  
+  
+  cluster <- as.character(S.O$seurat_clusters)
+  
   
   pheno <- data.frame(Sample = names(S.O$orig.ident))
   spp <- paste('BDiv', tt, rr, sep = '')
   pheno$spp <- spp
   pheno$time <- tt
   pheno$reactivate <- rr
-  
+  pheno$cluster <- cluster
+  pheno$cell <- paste(pheno$spp, pheno$cluster , sep = "")
   pheno$NAME <- paste(pheno$spp, pheno$Sample, sep = '_')
+
+  ind <- match(pheno$Sample,  colnames(expr))
+  colnames(expr) <- pheno$NAME[ind]
+  
+  if(down.sample){
+    set.seed(100)
+    S.O <- subset(x = S.O, downsample = 1000)
+  }
   
   
   L <- list(pheno = pheno, S.O = S.O)
@@ -1041,11 +1055,12 @@ processCount <- function(input.dir, filename, tt, rr, down.sample = T){
 }
 
 
-mergeS.O <- function(L){
-  num.objs <- length(L)
-  
-  phenos <- lapply(L, `[[`, 1)
-  S.Os <-  lapply(L, `[[`, 2)
+mergeS.O <- function(S.Os){
+  num.objs <- length(S.Os)
+ 
+  phenos <- lapply(S.Os, function(S.O){
+    return(S.O@meta.data)
+  })
   
   all.samples <- bind_rows(phenos)
   
@@ -1058,9 +1073,9 @@ mergeS.O <- function(L){
 }
 
 
-processeMergedS.O <- function(S.O.list, orthologs, data.ind = NA, ref.ind = NA, res = 0.2, SC = FALSE){
+processeMergedS.O <- function(S.O.list, data.ind = NA, ref.ind = NA, res = 0.2, SC = FALSE){
   ## Merge the S.O, add metadata, and re-split by spp and update the S.O.list
-  if(is.na(data.ind[1])){
+  if(any(is.na(data.ind))){
     data.ind = 1:length(S.O.list)
   }
   
