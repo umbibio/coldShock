@@ -352,9 +352,6 @@ copy.numbers$time <- factor(copy.numbers$time,levels = c('0hr', '4hr', '12hr', '
 
 
 
-p <- ggplot(copy.numbers, aes(time , m, fill = time, color=time)) + 
-  
-  plot(p)
 
 copy.numbers.filt <- copy.numbers %>% dplyr::filter(time %in% c('0hr', '7d', '7d(R)'))
 p <- ggplot(data=copy.numbers.filt, aes(x = time , y = m)) +
