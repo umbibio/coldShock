@@ -2,7 +2,11 @@ library(ggplot2)
 library(cowplot)
 library(patchwork)
 library(tidytext)
+library(tidyverse)
+library(doParallel)
+library(Seurat)
 
+source('./util_funcs.R')
 ## individually processed samples, merged, but not anchored
 
 prod.desc <- read.csv('../Input/coldShock/genes/BDiv_Prod_desc.csv')
@@ -25,8 +29,8 @@ length(common.genes)
 
 ## Calculating total mRNA levels
 copy.numbers <- lapply(S.O.list, function(S.O){
-  m <- mean(colSums(S.O@assays$RNA@data))
-  s <- sd(colSums(S.O@assays$RNA@data))
+  m <- mean(colSums(as.matrix(S.O@assays$RNA@data)))
+  s <- sd(colSums(as.matrix(S.O@assays$RNA@data)))
   return(list(m = m, s = s))
 })
 
@@ -34,16 +38,13 @@ means <- lapply(copy.numbers, `[[`, 1)
 sds <- lapply(copy.numbers, `[[`, 2)
 
 copy.numbers <- data.frame(time = names(means), m = unlist(means), s= unlist(sds))
+copy.numbers$time <- gsub('Y|N', "", gsub('BDiv', '', copy.numbers$time ))
 copy.numbers$time <- factor(copy.numbers$time,levels = c('0hr', '4hr', '12hr', '36hr', '7d', '36hr(R)', '7d(R)'))
 
 
 
-p <- ggplot(copy.numbers, aes(time , m, fill = time, color=time)) + 
-  
-plot(p)
 
-
-p <- ggplot(data=copy.numbers, aes(x = time , y = m)) +
+p <- ggplot(data=copy.numbers, aes(x = time , y = m, fill = time)) +
   geom_bar(stat = "identity")+
   geom_errorbar(aes(ymin=m-s, ymax=m+s), width=0.2, size=1) + 
   geom_text(aes(label=round(m), vjust=2,  color="black", size=6, fontface="bold"))+

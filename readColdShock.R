@@ -87,7 +87,7 @@ processCountColdShock <- function(input.dir, filename, tt, rr, down.sample = T){
 
 
 
-prod.desc <- read.csv('../Input/coldShock/genes/BDiv_Prod_desc.csv')
+prod.desc <- read.csv('../../Input/coldShock/genes/BDiv_Prod_desc.csv')
 prod.desc <- prod.desc %>% transmute(GeneID = Gene.ID, Product.Description = Product.Description)
 
 #saveRDS(prod.desc, '../Input/scClock/prod.desc.RData')
@@ -125,8 +125,8 @@ names(S.O.list) <- spps
 #saveRDS(file.info, '../Input/coldShock/RData/file_info.RData')
 #saveRDS(S.O.list, '../Input/coldShock/RData/S_O_list.RData')
 
-saveRDS(file.info, '../Input/coldShock/RData_new/file_info.RData')
-saveRDS(S.O.list, '../Input/coldShock/RData_new/S_O_list.RData')
+saveRDS(file.info, '../../Input/coldShock/RData_new/file_info.RData')
+saveRDS(S.O.list, '../../Input/coldShock/RData_new/S_O_list.RData')
 
 num.objs <- length(spps)
 genes <- lapply(1:num.objs, function(i){
